@@ -8,7 +8,5 @@ fn main() {
     land.autogen(4.0);
 
     // Print the landmass to terminal using ncurses
-    land.curses_start();
-    land.curses_print();
-    land.curses_stop();
+    land.termion_print();
 }

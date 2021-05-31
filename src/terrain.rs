@@ -1,8 +1,11 @@
 pub mod terrain {
-    use ncurses::*;
     use noise::{Fbm, MultiFractal, NoiseFn};
     use rand::prelude::*;
     use std::collections::HashMap;
+    use std::io::{stdin, stdout, Write};
+    use termion::input::TermRead;
+    use termion::raw::IntoRawMode;
+    use termion::*;
 
     #[derive(Debug)]
     pub enum Feature {
@@ -122,57 +125,50 @@ pub mod terrain {
             }
         }
 
-        pub fn curses_start(&self) {
-            initscr();
-            start_color();
-            keypad(stdscr(), true);
-            noecho();
-
-            // Get the number of colors supported by terminal
-            let n_colors = COLORS() as i16;
-
-            // Max value specified as 1000 by curses.
-            let scaler: i16 = 1000 / n_colors;
-
-            for i in 0..n_colors - 1 {
-                init_color(i, scaler * i, scaler * i, scaler * i);
-                init_pair(i, i as i16, i as i16);
-            }
-
-            // River Sources
-            init_color(n_colors - 1, 0, 0, 1000);
-            init_pair(n_colors - 1, n_colors - 1, n_colors - 1);
-
-            curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-        }
-
-        pub fn curses_print(&self) {
-            clear();
-
-            let n_colors = COLORS() as i16;
-            let half_value = COLORS() as f64 / 2.0;
+        pub fn termion_print(&self) {
+            let stdin = stdin();
+            let mut stdout = stdout()
+                .into_raw_mode()
+                .expect("Failed to enter raw mode for termion.");
+            writeln!(stdout, "{}", clear::All).expect("Failed to writeln!()");
+            let offset: u8 = 50;
             for x in 0..X {
                 for y in 0..Y {
-                    let mut c = (half_value * (self.height[x][y] + 1.0)) as i16;
+                    let value = (127.0 * (self.height[x][y] + 1.0)) as u8;
+                    let mut tile_color = color::Fg(color::Rgb(value, value, value));
+                    let mut tile_color_bg = color::Bg(color::Rgb(value, value, value));
+
                     if let Some(feature) = self.features.get(&(x, y)) {
                         match feature {
-                            Feature::RiverSource => c = n_colors - 1,
-                            Feature::Ocean => c = n_colors - 1,
+                            Feature::RiverSource => {
+                                tile_color =
+                                    color::Fg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                tile_color_bg =
+                                    color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
+                            }
+                            Feature::Ocean => {
+                                tile_color =
+                                    color::Fg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                tile_color_bg =
+                                    color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
+                            }
                         }
                     }
-                    attron(COLOR_PAIR(c));
-                    mvprintw(y as i32, x as i32, "#");
-                    attroff(COLOR_PAIR(c));
+                    write!(
+                        stdout,
+                        "{goto}{color}{bg}#",
+                        goto = cursor::Goto((x + 1) as u16, (y + 1) as u16),
+                        color = tile_color,
+                        bg = tile_color_bg
+                    )
+                    .expect("Failed to write!()");
                 }
             }
-
-            refresh();
-            let _ch = getch();
-        }
-
-        pub fn curses_stop(&self) {
-            curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
-            endwin();
+            stdout.flush().expect("Failed to flush stdout");
+            for _k in stdin.keys() {
+                break;
+            }
+            writeln!(stdout, "{}{}", style::Reset, clear::All).expect("Failed to writeln!()");
         }
     }
 }
