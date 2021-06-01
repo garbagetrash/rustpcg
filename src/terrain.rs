@@ -9,6 +9,20 @@ pub mod terrain {
     use termion::raw::IntoRawMode;
     use termion::*;
 
+    // https://en.wikipedia.org/wiki/Biome#/media/File:Climate_influence_on_terrestrial_biome.svg
+    #[derive(Copy, Clone, Debug)]
+    pub enum Biome {
+        Tundra,
+        BorealForest,
+        TemperateRainforest,
+        TemperateSeasonalForest,
+        Woodland,
+        TemperateGrassland,
+        TropicalRainforest,
+        Savanna,
+        SubtropicalDesert,
+    }
+
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum Feature {
         RiverSource,
@@ -17,14 +31,14 @@ pub mod terrain {
     }
 
     #[derive(Clone)]
-    pub struct Grid<const X: usize, const Y: usize> {
-        value: [[f64; Y]; X],
+    pub struct Grid<T, const X: usize, const Y: usize> {
+        value: [[T; Y]; X],
     }
 
-    impl<const X: usize, const Y: usize> Grid<X, Y> {
-        pub fn new() -> Grid<X, Y> {
+    impl<T, const X: usize, const Y: usize> Grid<T, X, Y> {
+        pub fn new(grid: [[T; Y]; X]) -> Grid<T, X, Y> {
             Grid {
-                value: [[0_f64; Y]; X],
+                value: grid,
             }
         }
 
@@ -68,30 +82,30 @@ pub mod terrain {
         }
     }
 
-    impl<const X: usize, const Y: usize> Index<usize> for Grid<X, Y> {
-        type Output = [f64; Y];
+    impl<T, const X: usize, const Y: usize> Index<usize> for Grid<T, X, Y> {
+        type Output = [T; Y];
 
         fn index(&self, x: usize) -> &Self::Output {
             &self.value[x]
         }
     }
 
-    impl<const X: usize, const Y: usize> IndexMut<usize> for Grid<X, Y> {
+    impl<T, const X: usize, const Y: usize> IndexMut<usize> for Grid<T, X, Y> {
         fn index_mut(&mut self, x: usize) -> &mut Self::Output {
             &mut self.value[x]
         }
     }
 
     pub struct Lake<const X: usize, const Y: usize> {
-        heightmap: Grid<X, Y>,
+        height_map: Grid<f64, X, Y>,
         tiles: HashSet<(usize, usize)>,
         perimeter: HashSet<(usize, usize)>,
     }
 
     impl<const X: usize, const Y: usize> Lake<X, Y> {
-        pub fn new(heightmap: Grid<X, Y>) -> Lake<X, Y> {
+        pub fn new(height_map: Grid<f64, X, Y>) -> Lake<X, Y> {
             Lake {
-                heightmap: heightmap,
+                height_map: height_map,
                 tiles: HashSet::new(),
                 perimeter: HashSet::new(),
             }
@@ -100,7 +114,7 @@ pub mod terrain {
         pub fn _insert(&mut self, tile: (usize, usize)) {
             self.tiles.insert(tile);
             self.perimeter.remove(&tile);
-            let mut neighbors = self.heightmap.get_neighbors(&tile);
+            let mut neighbors = self.height_map.get_neighbors(&tile);
 
             for n in neighbors {
                 if !self.tiles.contains(&n) {
@@ -109,18 +123,25 @@ pub mod terrain {
             }
         }
 
-        pub fn fill(&mut self, tile: (usize, usize), ocean_height: f64) -> Vec<(usize, usize)> {
-            self._insert(tile);
+        pub fn fill(
+            &mut self,
+            tile: (usize, usize),
+            ocean_height: f64,
+            river_tile_limit: usize,
+        ) -> Vec<(usize, usize)> {
+            let mut tile_cntr = 0;
 
-            let mut lake_height = self.heightmap[tile.0][tile.1];
-            println!("lake_height: {}", lake_height);
+            self._insert(tile);
+            tile_cntr += 1;
+
+            let mut lake_height = self.height_map[tile.0][tile.1];
 
             loop {
                 // Find lowest height perimeter tile
                 let mut min_tile = tile;
                 let mut min_height = f64::MAX;
                 for p in self.perimeter.iter() {
-                    let h = self.heightmap[p.0][p.1];
+                    let h = self.height_map[p.0][p.1];
                     if min_height > h {
                         min_tile = p.clone();
                         min_height = h;
@@ -128,16 +149,17 @@ pub mod terrain {
                 }
 
                 // If we've hit the ocean, we're done
-                println!("min_height: {}", min_height);
-                println!("ocean_height: {}", ocean_height);
                 if min_height < ocean_height {
+                    break;
+                }
+                if tile_cntr >= river_tile_limit {
                     break;
                 }
 
                 lake_height = min_height;
-                println!("lake_height: {}", lake_height);
 
                 self._insert(min_tile);
+                tile_cntr += 1;
             }
 
             self.tiles.remove(&tile);
@@ -145,54 +167,192 @@ pub mod terrain {
         }
     }
 
-    pub struct Landmass<const X: usize, const Y: usize> {
-        pub heightmap: Grid<X, Y>,
-        pub features: HashMap<(usize, usize), Feature>,
+    pub fn temp_map_value_to_degrees_c(value: f64) -> f64 {
+        // Input values on range [-1.0, 1.0]... map to [-10.0, 32.0]
+        let min_temp = -10.0;
+        let max_temp = 32.0;
+        let scaler = (max_temp - min_temp) / 2.0;
+        scaler * (value + 1.0) + min_temp
+    }
+
+    pub fn precip_map_value_to_cm_rainfall(value: f64, temperature: f64) -> f64 {
+        // Input values on range [-1.0, 1.0]... map to [0.0, 450.0].
+        // Temperature values on range [-1.0, 1.0] as well.
+        // Scale by temperature, basically precip * temp = precip, approximately
+        let min_temp = 0.0;
+        let max_temp = 450.0;
+        let scaler = (max_temp - min_temp) / 2.0;
+        (scaler * (value + 1.0) - min_temp) * ((temperature + 1.0) / 2.0)
+    }
+
+    pub struct AutoGenConfig {
+        pub landmass_frequency: f64,
+        pub precip_frequency: f64,
+        pub temperature_frequency: f64,
         pub ocean_height: f64,
+        pub river_height_limit: f64,
+        pub river_tile_prob: f64,
+        pub river_tile_limit: usize,
+        pub seed: Option<u32>,
+    }
+
+    pub struct Landmass<const X: usize, const Y: usize> {
+        pub height_map: Grid<f64, X, Y>,
+        pub precip_map: Grid<f64, X, Y>,
+        pub biome_map: Grid<Biome, X, Y>,
+        pub temperature_map: Grid<f64, X, Y>,
+        pub features: HashMap<(usize, usize), Feature>,
         pub render: bool,
     }
 
     impl<const X: usize, const Y: usize> Landmass<X, Y> {
         pub fn new() -> Landmass<X, Y> {
             Landmass {
-                heightmap: Grid::<X, Y>::new(),
+                height_map: Grid::<f64, X, Y>::new([[0.0; Y]; X]),
+                precip_map: Grid::<f64, X, Y>::new([[0.0; Y]; X]),
+                biome_map: Grid::<Biome, X, Y>::new([[Biome::Tundra; Y]; X]),
+                temperature_map: Grid::<f64, X, Y>::new([[0.0; Y]; X]),
                 features: HashMap::new(),
-                ocean_height: -0.25,
                 render: false,
             }
         }
 
-        pub fn populate_ocean(&mut self) {
+        pub fn populate_ocean(&mut self, ocean_height: f64) {
             for x in 0..X {
                 for y in 0..Y {
-                    if self.heightmap[x][y] < self.ocean_height {
+                    if self.height_map[x][y] < ocean_height {
                         self.features.insert((x, y), Feature::Ocean);
                     }
                 }
             }
         }
 
-        pub fn autogen(&mut self, scale: f64) {
-            // Generate the heightmap
-            let g = Fbm::new();
-            let mut rng = rand::thread_rng();
-            let seed: u32 = rng.gen();
+        pub fn autogen(&mut self, config: AutoGenConfig) {
+            // Generate the height_map
+            let mut g = Fbm::new();
+            let mut seed = 0;
+            if let Some(s) = config.seed {
+                seed = s;
+            } else {
+                let mut rng = rand::thread_rng();
+                seed = rng.gen();
+            }
             let g = g.set_seed(seed);
-            let g = g.set_frequency(scale);
+            let g = g.set_frequency(config.landmass_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    self.heightmap[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                    self.height_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
                 }
             }
 
-            if (self.render) {
+            if self.render {
                 self.tui_render();
             }
 
-            // Populate ocean tiles
-            self.populate_ocean();
+            // Generate the precip_map
+            let mut g = Fbm::new();
+            let mut rng = rand::thread_rng();
+            let g = g.set_seed(rng.gen());
+            let g = g.set_frequency(config.precip_frequency);
+            for x in 0..X {
+                for y in 0..Y {
+                    self.precip_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                }
+            }
 
-            if (self.render) {
+            if self.render {
+                self.precip_tui_render();
+            }
+
+            // Generate the temperature_map in degrees C
+            let mut g = Fbm::new();
+            let mut rng = rand::thread_rng();
+            let g = g.set_seed(rng.gen());
+            let g = g.set_frequency(config.temperature_frequency);
+            for x in 0..X {
+                for y in 0..Y {
+                    self.temperature_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                }
+            }
+
+            if self.render {
+                self.temperature_tui_render();
+            }
+
+            // Generate the biome map
+            for x in 0..X {
+                for y in 0..Y {
+                    let norm_temp = self.temperature_map[x][y];
+                    let temp = temp_map_value_to_degrees_c(norm_temp);
+                    let norm_precip = self.precip_map[x][y];
+                    let precip = precip_map_value_to_cm_rainfall(norm_precip, norm_temp);
+
+                    println!("temp: {} C", temp);
+                    println!("precip: {} cm", precip);
+
+                    // Anything below 0.0 C is Tundra, roughly
+                    let mut biome = Biome::Tundra;
+
+                    // Boreal forest
+                    if temp < 7.0 && temp > 0.0 && precip > 40.0 {
+                        biome = Biome::BorealForest;
+                    }
+
+                    // Temperate grassland/Cold desert
+                    if temp > 0.0 && temp < 22.0 && precip < 50.0 {
+                        biome = Biome::TemperateGrassland;
+                    }
+
+                    // Woodland/Shrubland 50 cm at 7 C, 120 cm at 22 C
+                    // 120 - 50 = 70, 22 - 7 = 15, slope = 70 / 15 = 4.67
+                    // y-intercept = 50 - 7 * 4.67 = 50 - 32.67 = 17.33
+                    if temp > 7.0 && temp < 22.0 && precip > 50.0 && precip < 17.33 + 4.67 * temp {
+                        biome = Biome::Woodland;
+                    }
+
+                    // Temperate seasonal forest 170 cm at 7 C, 230 at 22 C
+                    // 230 - 170 = 60, 22 - 7 = 15, slope = 60 / 15 = 4
+                    // y-intercept = 170 - 7 * 4 = 170 - 28 = 142
+                    if temp > 7.0 && temp < 22.0 && precip > 17.33 + 4.67 * temp && precip < 170.0 + 4.0 * temp {
+                        biome = Biome::TemperateSeasonalForest;
+                    }
+
+                    // Temperate rainforest
+                    if temp > 7.0 && temp < 22.0 && precip > 170.0 + 4.0 * temp {
+                        biome = Biome::TemperateSeasonalForest;
+                    }
+
+                    // Subtropical desert 50 cm at 22 C, 100 cm at 32 C
+                    // 100 - 50 = 50, 32 - 22 = 10, slope = 50 / 10 = 5
+                    // y-intercept = 50 - 22 * 5 = 50 - 110 = -60
+                    if temp > 22.0 && precip < 5.0 * temp - 60.0 {
+                        biome = Biome::SubtropicalDesert;
+                    }
+
+                    // Tropical seasonal forest/savanna 230 cm at 22 C, 280 cm at 32 C
+                    // 280 - 230 = 50, 32 - 22 = 10, slope = 50 / 10 = 5
+                    // y-intercept = 280 - 22 * 5 = 280 - 110 = 170
+                    if temp > 22.0 && precip > 5.0 * temp - 60.0 && precip < 5.0 * temp + 170.0 {
+                        biome = Biome::Savanna;
+                    }
+
+                    // Tropical rainforest
+                    if temp > 22.0 && precip > 5.0 * temp + 170.0 {
+                        biome = Biome::TropicalRainforest;
+                    }
+
+                    self.biome_map[x][y] = biome;
+                }
+            }
+
+            if self.render {
+                self.biome_tui_render();
+            }
+
+            // Populate ocean tiles
+            self.populate_ocean(config.ocean_height);
+
+            if self.render {
                 self.tui_render();
             }
 
@@ -200,12 +360,12 @@ pub mod terrain {
             let mut rng = rand::thread_rng();
             for x in 0..X {
                 for y in 0..Y {
-                    let h = self.heightmap[x][y];
+                    let h = self.height_map[x][y];
 
                     // Above some height, eligible to be a source
-                    if h > 0.05 {
-                        if rng.gen::<f64>() > 0.998_f64 {
-                            // If above some height, 5% chance for tile to be a
+                    if h > config.river_height_limit {
+                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob {
+                            // If above some height, x% chance for tile to be a
                             // source.  Later add in contraint keeping sources
                             // away from each other I'd think.
                             self.features.insert((x, y), Feature::RiverSource);
@@ -214,30 +374,32 @@ pub mod terrain {
                 }
             }
 
-            if (self.render) {
+            if self.render {
                 self.tui_render();
             }
 
             // Path the rivers
             let feature_copy = self.features.clone();
-            println!("{}", clear::All);
             for (k, v) in feature_copy.iter() {
                 if *v == Feature::RiverSource {
-                    println!("{:?}", k);
-                    self.river_path(*k);
+                    self.river_path(*k, config.ocean_height, config.river_tile_limit);
                 }
             }
 
-            if (self.render) {
+            if self.render {
                 self.tui_render();
             }
         }
 
-        pub fn river_path(&mut self, start: (usize, usize)) {
+        pub fn river_path(
+            &mut self,
+            start: (usize, usize),
+            ocean_height: f64,
+            river_tile_limit: usize,
+        ) {
             // Iterate until done
-            println!("Calling lake.fill()...");
-            let mut lake = Lake::<X, Y>::new(self.heightmap.clone());
-            let new_river_tiles = lake.fill(start, self.ocean_height);
+            let mut lake = Lake::<X, Y>::new(self.height_map.clone());
+            let new_river_tiles = lake.fill(start, ocean_height, river_tile_limit);
             for tile in new_river_tiles {
                 self.features.insert(tile, Feature::River);
             }
@@ -248,11 +410,11 @@ pub mod terrain {
             let mut stdout = stdout()
                 .into_raw_mode()
                 .expect("Failed to enter raw mode for termion.");
-            writeln!(stdout, "{}", clear::All).expect("Failed to writeln!()");
+            writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
             let offset: u8 = 0;
             for x in 0..X {
                 for y in 0..Y {
-                    let value = (127.0 * (self.heightmap[x][y] + 1.0)) as u8;
+                    let value = (127.0 * (self.height_map[x][y] + 1.0)) as u8;
                     let mut tile_color = color::Fg(color::Rgb(value, value, value));
                     let mut tile_color_bg = color::Bg(color::Rgb(value, value, value));
                     let mut tile_char = '#';
@@ -291,11 +453,170 @@ pub mod terrain {
                     .expect("Failed to write!()");
                 }
             }
+            writeln!(
+                stdout,
+                "{}{}{}Terrain map",
+                cursor::Goto(1, (Y + 1) as u16),
+                color::Fg(color::Reset),
+                color::Bg(color::Reset),
+            )
+            .expect("Failed to write!()");
             stdout.flush().expect("Failed to flush stdout");
             for _k in stdin.keys() {
                 break;
             }
-            writeln!(stdout, "{}{}", style::Reset, clear::All).expect("Failed to writeln!()");
+            println!("{}{}{}\n\r", style::Reset, clear::All, cursor::Show);
+        }
+
+        pub fn precip_tui_render(&self) {
+            let stdin = stdin();
+            let mut stdout = stdout()
+                .into_raw_mode()
+                .expect("Failed to enter raw mode for termion.");
+            writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
+            let offset: u8 = 0;
+            for x in 0..X {
+                for y in 0..Y {
+                    let value = (127.0 * (self.precip_map[x][y] + 1.0)) as u8;
+                    let mut tile_color = color::Fg(color::Rgb(value, value, value));
+                    let mut tile_color_bg = color::Bg(color::Rgb(value, value, value));
+                    let mut tile_char = '#';
+                    write!(
+                        stdout,
+                        "{goto}{color}{bg}{char}",
+                        goto = cursor::Goto((x + 1) as u16, (y + 1) as u16),
+                        color = tile_color,
+                        bg = tile_color_bg,
+                        char = tile_char,
+                    )
+                    .expect("Failed to write!()");
+                }
+            }
+            writeln!(
+                stdout,
+                "{}{}{}Precipitation map",
+                cursor::Goto(1, (Y + 1) as u16),
+                color::Fg(color::Reset),
+                color::Bg(color::Reset),
+            )
+            .expect("Failed to write!()");
+            stdout.flush().expect("Failed to flush stdout");
+            for _k in stdin.keys() {
+                break;
+            }
+            println!("{}{}{}\n\r", style::Reset, clear::All, cursor::Show);
+        }
+
+        pub fn temperature_tui_render(&self) {
+            let stdin = stdin();
+            let mut stdout = stdout()
+                .into_raw_mode()
+                .expect("Failed to enter raw mode for termion.");
+            writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
+            let offset: u8 = 0;
+            for x in 0..X {
+                for y in 0..Y {
+                    let value = (127.0 * (self.temperature_map[x][y] + 1.0)) as u8;
+                    let mut tile_color = color::Fg(color::Rgb(value, value, value));
+                    let mut tile_color_bg = color::Bg(color::Rgb(value, value, value));
+                    let mut tile_char = '#';
+                    write!(
+                        stdout,
+                        "{goto}{color}{bg}{char}",
+                        goto = cursor::Goto((x + 1) as u16, (y + 1) as u16),
+                        color = tile_color,
+                        bg = tile_color_bg,
+                        char = tile_char,
+                    )
+                    .expect("Failed to write!()");
+                }
+            }
+            writeln!(
+                stdout,
+                "{}{}{}Temperature map",
+                cursor::Goto(1, (Y + 1) as u16),
+                color::Fg(color::Reset),
+                color::Bg(color::Reset),
+            )
+            .expect("Failed to write!()");
+            stdout.flush().expect("Failed to flush stdout");
+            for _k in stdin.keys() {
+                break;
+            }
+            println!("{}{}{}\n\r", style::Reset, clear::All, cursor::Show);
+        }
+
+        pub fn biome_tui_render(&self) {
+            let stdin = stdin();
+            let mut stdout = stdout()
+                .into_raw_mode()
+                .expect("Failed to enter raw mode for termion.");
+            writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
+            let offset: u8 = 0;
+            for x in 0..X {
+                for y in 0..Y {
+                    let mut rgb = (1.0, 1.0, 1.0);
+                    match self.biome_map[x][y] {
+                        Biome::Tundra => {
+                            rgb = (0.576, 0.655, 0.675);
+                        },
+                        Biome::BorealForest => {
+                            rgb = (0.357, 0.565, 0.318);
+                        },
+                        Biome::TemperateRainforest => {
+                            rgb = (0.039, 0.329, 0.427);
+                        },
+                        Biome::TemperateSeasonalForest => {
+                            rgb = (0.173, 0.537, 0.627);
+                        },
+                        Biome::Woodland => {
+                            rgb = (0.702, 0.486, 0.024);
+                        },
+                        Biome::TemperateGrassland => {
+                            rgb = (0.573, 0.494, 0.188);
+                        },
+                        Biome::TropicalRainforest => {
+                            rgb = (0.027, 0.325, 0.188);
+                        },
+                        Biome::Savanna => {
+                            rgb = (0.592, 0.647, 0.153);
+                        },
+                        Biome::SubtropicalDesert => {
+                            rgb = (0.784, 0.443, 0.216);
+                        },
+                    }
+                    let h = (1.0 + self.height_map[x][y]) / 2.0;
+                    let h = 1.0;
+                    let r: u8 = (255.0 * rgb.0 * h) as u8;
+                    let g: u8 = (255.0 * rgb.1 * h) as u8;
+                    let b: u8 = (255.0 * rgb.2 * h) as u8;
+                    let mut tile_color = color::Fg(color::Rgb(r, g, b));
+                    let mut tile_color_bg = color::Bg(color::Rgb(r, g, b));
+                    let mut tile_char = '#';
+                    write!(
+                        stdout,
+                        "{goto}{color}{bg}{char}",
+                        goto = cursor::Goto((x + 1) as u16, (y + 1) as u16),
+                        color = tile_color,
+                        bg = tile_color_bg,
+                        char = tile_char,
+                    )
+                    .expect("Failed to write!()");
+                }
+            }
+            writeln!(
+                stdout,
+                "{}{}{}Biome map",
+                cursor::Goto(1, (Y + 1) as u16),
+                color::Fg(color::Reset),
+                color::Bg(color::Reset),
+            )
+            .expect("Failed to write!()");
+            stdout.flush().expect("Failed to flush stdout");
+            for _k in stdin.keys() {
+                break;
+            }
+            println!("{}{}{}\n\r", style::Reset, clear::All, cursor::Show);
         }
     }
 }
