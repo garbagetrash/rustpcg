@@ -5,22 +5,39 @@ pub mod terrain {
     use std::collections::{HashMap, HashSet};
     use std::io::{stdin, stdout, Write};
     use std::ops::{Index, IndexMut};
+    use termion::color::{Bg, Fg, Rgb};
     use termion::input::TermRead;
     use termion::raw::IntoRawMode;
     use termion::*;
 
     // https://en.wikipedia.org/wiki/Biome#/media/File:Climate_influence_on_terrestrial_biome.svg
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     pub enum Biome {
         Tundra,
         BorealForest,
         TemperateRainforest,
         TemperateSeasonalForest,
-        Woodland,
+        Shrubland,
         TemperateGrassland,
         TropicalRainforest,
         Savanna,
         SubtropicalDesert,
+    }
+
+    impl Biome {
+        fn get_color(&self) -> Rgb {
+            match self {
+                Biome::Tundra => Rgb(147, 168, 173),
+                Biome::BorealForest => Rgb(200, 113, 55),
+                Biome::TemperateRainforest => Rgb(25, 55, 0),
+                Biome::TemperateSeasonalForest => Rgb(151, 165, 39),
+                Biome::Shrubland => Rgb(127, 133, 96),
+                Biome::TemperateGrassland => Rgb(136, 133, 39),
+                Biome::TropicalRainforest => Rgb(48, 127, 55),
+                Biome::Savanna => Rgb(202, 139, 43),
+                Biome::SubtropicalDesert => Rgb(241, 193, 117),
+            }
+        }
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,9 +54,7 @@ pub mod terrain {
 
     impl<T, const X: usize, const Y: usize> Grid<T, X, Y> {
         pub fn new(grid: [[T; Y]; X]) -> Grid<T, X, Y> {
-            Grid {
-                value: grid,
-            }
+            Grid { value: grid }
         }
 
         pub fn width(&self) -> usize {
@@ -271,7 +286,12 @@ pub mod terrain {
             let g = g.set_frequency(config.temperature_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    self.temperature_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                    // Get a [-0.5, 0.5] value
+                    let value = g.get([x as f64 / X as f64, y as f64 / Y as f64]) / 2.0;
+
+                    // Let natural temp be 0.5 at equator, -0.5 at poles
+                    let temp = -2.0 * ((y as f64) / (Y as f64) - 0.5).abs() + 0.5;
+                    self.temperature_map[x][y] = temp + value;
                 }
             }
 
@@ -307,13 +327,17 @@ pub mod terrain {
                     // 120 - 50 = 70, 22 - 7 = 15, slope = 70 / 15 = 4.67
                     // y-intercept = 50 - 7 * 4.67 = 50 - 32.67 = 17.33
                     if temp > 7.0 && temp < 22.0 && precip > 50.0 && precip < 17.33 + 4.67 * temp {
-                        biome = Biome::Woodland;
+                        biome = Biome::Shrubland;
                     }
 
                     // Temperate seasonal forest 170 cm at 7 C, 230 at 22 C
                     // 230 - 170 = 60, 22 - 7 = 15, slope = 60 / 15 = 4
                     // y-intercept = 170 - 7 * 4 = 170 - 28 = 142
-                    if temp > 7.0 && temp < 22.0 && precip > 17.33 + 4.67 * temp && precip < 170.0 + 4.0 * temp {
+                    if temp > 7.0
+                        && temp < 22.0
+                        && precip > 17.33 + 4.67 * temp
+                        && precip < 170.0 + 4.0 * temp
+                    {
                         biome = Biome::TemperateSeasonalForest;
                     }
 
@@ -361,10 +385,22 @@ pub mod terrain {
             for x in 0..X {
                 for y in 0..Y {
                     let h = self.height_map[x][y];
+                    let p = self.precip_map[x][y];
 
                     // Above some height, eligible to be a source
                     if h > config.river_height_limit {
-                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob {
+                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob - 0.05 * p {
+                            // If above some height, x% chance for tile to be a
+                            // source.  Later add in contraint keeping sources
+                            // away from each other I'd think.
+                            self.features.insert((x, y), Feature::RiverSource);
+                        }
+                    }
+
+                    // Below some height, eligible to be a source (water collecting in low
+                    // grounds...)
+                    if h < -0.25 {
+                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob - 0.05 * p {
                             // If above some height, x% chance for tile to be a
                             // source.  Later add in contraint keeping sources
                             // away from each other I'd think.
@@ -411,7 +447,10 @@ pub mod terrain {
                 .into_raw_mode()
                 .expect("Failed to enter raw mode for termion.");
             writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
+
             let offset: u8 = 0;
+            let mut used_biome_set = HashSet::<Biome>::new();
+
             for x in 0..X {
                 for y in 0..Y {
                     let value = (127.0 * (self.height_map[x][y] + 1.0)) as u8;
@@ -441,6 +480,14 @@ pub mod terrain {
                                     color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
                             }
                         }
+                    } else {
+                        let biome = self.biome_map[x][y];
+                        used_biome_set.insert(biome);
+
+                        let (fgc, bgc, tc) = self.get_biome_tile(biome, x, y);
+                        tile_color = fgc;
+                        tile_color_bg = bgc;
+                        tile_char = tc;
                     }
                     write!(
                         stdout,
@@ -461,6 +508,24 @@ pub mod terrain {
                 color::Bg(color::Reset),
             )
             .expect("Failed to write!()");
+
+            // Print out biome colors
+            let mut cntr = 2;
+            for b in used_biome_set {
+                writeln!(
+                    stdout,
+                    "{}{}{}##{}{} {:?}\t",
+                    cursor::Goto(1, (Y + cntr) as u16),
+                    Fg(b.get_color()),
+                    Bg(b.get_color()),
+                    Fg(color::Reset),
+                    Bg(color::Reset),
+                    b,
+                )
+                .expect("Failed to write!()");
+                cntr += 1;
+            }
+
             stdout.flush().expect("Failed to flush stdout");
             for _k in stdin.keys() {
                 break;
@@ -546,53 +611,42 @@ pub mod terrain {
             println!("{}{}{}\n\r", style::Reset, clear::All, cursor::Show);
         }
 
+        pub fn get_biome_tile(&self, biome: Biome, x: usize, y: usize) -> (Fg<Rgb>, Bg<Rgb>, char) {
+            let h = (1.0 + self.height_map[x][y]) / 2.0;
+            let rgb = biome.get_color();
+
+            let r: u8 = ((rgb.0 as f64) * h) as u8;
+            let g: u8 = ((rgb.1 as f64) * h) as u8;
+            let b: u8 = ((rgb.2 as f64) * h) as u8;
+
+            let mut tile_color = Fg(Rgb(r, g, b));
+            let tile_color_bg = Bg(Rgb(r, g, b));
+            let mut tile_char = '#';
+            if h > 0.8 {
+                tile_color = Fg(Rgb(255, 255, 255));
+                tile_char = '^';
+            } else if h > 0.7 {
+                tile_color = Fg(Rgb(90, 70, 70));
+                tile_char = '^';
+            }
+
+            (tile_color, tile_color_bg, tile_char)
+        }
+
         pub fn biome_tui_render(&self) {
             let stdin = stdin();
             let mut stdout = stdout()
                 .into_raw_mode()
                 .expect("Failed to enter raw mode for termion.");
             writeln!(stdout, "{}{}", clear::All, cursor::Hide).expect("Failed to writeln!()");
-            let offset: u8 = 0;
+
+            let mut used_biome_set = HashSet::<Biome>::new();
             for x in 0..X {
                 for y in 0..Y {
-                    let mut rgb = (1.0, 1.0, 1.0);
-                    match self.biome_map[x][y] {
-                        Biome::Tundra => {
-                            rgb = (0.576, 0.655, 0.675);
-                        },
-                        Biome::BorealForest => {
-                            rgb = (0.357, 0.565, 0.318);
-                        },
-                        Biome::TemperateRainforest => {
-                            rgb = (0.039, 0.329, 0.427);
-                        },
-                        Biome::TemperateSeasonalForest => {
-                            rgb = (0.173, 0.537, 0.627);
-                        },
-                        Biome::Woodland => {
-                            rgb = (0.702, 0.486, 0.024);
-                        },
-                        Biome::TemperateGrassland => {
-                            rgb = (0.573, 0.494, 0.188);
-                        },
-                        Biome::TropicalRainforest => {
-                            rgb = (0.027, 0.325, 0.188);
-                        },
-                        Biome::Savanna => {
-                            rgb = (0.592, 0.647, 0.153);
-                        },
-                        Biome::SubtropicalDesert => {
-                            rgb = (0.784, 0.443, 0.216);
-                        },
-                    }
-                    let h = (1.0 + self.height_map[x][y]) / 2.0;
-                    let h = 1.0;
-                    let r: u8 = (255.0 * rgb.0 * h) as u8;
-                    let g: u8 = (255.0 * rgb.1 * h) as u8;
-                    let b: u8 = (255.0 * rgb.2 * h) as u8;
-                    let mut tile_color = color::Fg(color::Rgb(r, g, b));
-                    let mut tile_color_bg = color::Bg(color::Rgb(r, g, b));
-                    let mut tile_char = '#';
+                    let biome = self.biome_map[x][y];
+                    let (tile_color, tile_color_bg, tile_char) = self.get_biome_tile(biome, x, y);
+
+                    used_biome_set.insert(biome);
                     write!(
                         stdout,
                         "{goto}{color}{bg}{char}",
@@ -608,10 +662,28 @@ pub mod terrain {
                 stdout,
                 "{}{}{}Biome map",
                 cursor::Goto(1, (Y + 1) as u16),
-                color::Fg(color::Reset),
-                color::Bg(color::Reset),
+                Fg(color::Reset),
+                Bg(color::Reset),
             )
             .expect("Failed to write!()");
+
+            // Print out biome colors
+            let mut cntr = 2;
+            for b in used_biome_set {
+                writeln!(
+                    stdout,
+                    "{}{}{}##{}{} {:?}\t",
+                    cursor::Goto(1, (Y + cntr) as u16),
+                    Fg(b.get_color()),
+                    Bg(b.get_color()),
+                    Fg(color::Reset),
+                    Bg(color::Reset),
+                    b,
+                )
+                .expect("Failed to write!()");
+                cntr += 1;
+            }
+
             stdout.flush().expect("Failed to flush stdout");
             for _k in stdin.keys() {
                 break;
