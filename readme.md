@@ -15,3 +15,5 @@ As usual, just build and run with:
 ```sh
 $ cargo run --release
 ```
+
+![Example Run](screenshots/example.png?raw=true)
