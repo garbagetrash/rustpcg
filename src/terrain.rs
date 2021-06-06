@@ -207,8 +207,6 @@ pub mod terrain {
         pub temperature_frequency: f64,
         pub temperature_offset: f64,
         pub ocean_height: f64,
-        pub river_height_limit: f64,
-        pub river_tile_prob: f64,
         pub river_tile_limit: usize,
         pub seed: Option<u32>,
     }
@@ -245,6 +243,9 @@ pub mod terrain {
         }
 
         pub fn autogen(&mut self, config: AutoGenConfig) {
+            let x_scale = 200.0;
+            let y_scale = 100.0;
+
             // Generate the height_map
             let mut g = Fbm::new();
             let mut seed = 0;
@@ -258,7 +259,7 @@ pub mod terrain {
             let g = g.set_frequency(config.landmass_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    self.height_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                    self.height_map[x][y] = g.get([x as f64 / x_scale, y as f64 / y_scale]);
                 }
             }
 
@@ -273,7 +274,7 @@ pub mod terrain {
             let g = g.set_frequency(config.precip_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    self.precip_map[x][y] = 1.5 * g.get([x as f64 / X as f64, y as f64 / Y as f64]) + config.precip_offset;
+                    self.precip_map[x][y] = 1.5 * g.get([x as f64 / x_scale, y as f64 / y_scale]) + config.precip_offset;
                     if self.precip_map[x][y] > 1.0 {
                         self.precip_map[x][y] = 1.0;
                     } else if self.precip_map[x][y] < -1.0 {
@@ -293,18 +294,36 @@ pub mod terrain {
             let g = g.set_frequency(config.temperature_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    // Get a [-0.5, 0.5] value
-                    let value = g.get([x as f64 / X as f64, y as f64 / Y as f64]) / 2.0;
+                    // Let natural temp be 0.8 at equator, -0.5 at poles
+                    let mut temp = -2.6 * ((y as f64) / (Y as f64) - 0.5).abs() + 0.8;
 
-                    // Let natural temp be 0.7 at equator, -0.6 at poles
-                    let temp = -2.6 * ((y as f64) / (Y as f64) - 0.5).abs() + 0.7;
-                    self.temperature_map[x][y] = temp + value + config.temperature_offset;
-
-                    if self.temperature_map[x][y] > 1.0 {
-                        self.temperature_map[x][y] = 1.0;
-                    } else if self.temperature_map[x][y] < -1.0 {
-                        self.temperature_map[x][y] = -1.0;
+                    // Consider height map (higher altitude -> lower temp)
+                    let h = self.height_map[x][y];
+                    if h > 0.8 {
+                        // Tall mountains (range of ~45, so 0.1 = 2.25 deg. C)
+                        temp -= (10.0 * (h - 0.8) + 0.9);
+                    } else if h > 0.7 {
+                        // Foothills
+                        temp -= (5.0 * (h - 0.7) + 0.4);
+                    } else if h > 0.0 {
+                        temp -= 0.8 * h;
                     }
+
+                    // Get a random [-0.5, 0.5] value
+                    temp += g.get([x as f64 / x_scale, y as f64 / y_scale]) / 2.0;
+
+                    // Factor in config
+                    temp += config.temperature_offset;
+
+                    // Saturate to [-1.0, 1.0]
+                    if temp > 1.0 {
+                        temp = 1.0;
+                    } else if temp < -1.0 {
+                        temp = -1.0;
+                    }
+
+                    // Assign when done
+                    self.temperature_map[x][y] = temp;
                 }
             }
 
@@ -400,20 +419,22 @@ pub mod terrain {
                     let h = self.height_map[x][y];
                     let p = self.precip_map[x][y];
 
-                    // Above some height, eligible to be a source
-                    if h > config.river_height_limit {
-                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob - 0.05 * p {
-                            // If above some height, x% chance for tile to be a
-                            // source.  Later add in contraint keeping sources
-                            // away from each other I'd think.
-                            self.features.insert((x, y), Feature::RiverSource);
+                    let mut any_sources = false;
+                    let neighbors = self.height_map.get_neighbors(&(x, y));
+
+                    for n in neighbors {
+                        if let Some(feature) = self.features.get(&n) {
+                            if *feature == Feature::RiverSource {
+                                any_sources = true;
+                                break;
+                            }
                         }
                     }
 
-                    // Below some height, eligible to be a source (water collecting in low
-                    // grounds...)
-                    if h < -0.25 {
-                        if rng.gen::<f64>() > 1.0 - config.river_tile_prob - 0.05 * p {
+                    // If no neighboring sources, create one with some probability proportional to
+                    // the precipitation at this tile.
+                    if !any_sources {
+                        if rng.gen::<f64>() > 1.0 - 0.1 * p {
                             // If above some height, x% chance for tile to be a
                             // source.  Later add in contraint keeping sources
                             // away from each other I'd think.
@@ -477,11 +498,11 @@ pub mod terrain {
                                 tile_color = color::Fg(color::Rgb(0, 255, 255));
                                 tile_color_bg =
                                     color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
-                                tile_char = 'O';
+                                tile_char = 'o';
                             }
                             Feature::River => {
                                 tile_color =
-                                    color::Fg(color::Rgb(0, 255, value.saturating_add(offset)));
+                                    color::Fg(color::Rgb(0, 80, value.saturating_add(offset)));
                                 tile_color_bg =
                                     color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
                                 tile_char = '~';
@@ -634,7 +655,24 @@ pub mod terrain {
 
             let mut tile_color = Fg(Rgb(r, g, b));
             let tile_color_bg = Bg(Rgb(r, g, b));
+
             let mut tile_char = '#';
+            match biome {
+                Biome::TropicalRainforest => {
+                    tile_color = Fg(Rgb(0, 100, 0));
+                    tile_char = 't';
+                },
+                Biome::BorealForest => {
+                    tile_color = Fg(Rgb(0, 60, 0));
+                    tile_char = 't';
+                },
+                Biome::TemperateSeasonalForest => {
+                    tile_color = Fg(Rgb(70, 100, 40));
+                    tile_char = 'p';
+                },
+                _ => {},
+            }
+
             if h > 0.8 {
                 tile_color = Fg(Rgb(255, 255, 255));
                 tile_char = '^';

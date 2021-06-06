@@ -9,14 +9,12 @@ fn main() {
 
     let config = AutoGenConfig {
         landmass_frequency: 4.0,
-        precip_frequency: 2.0,
+        precip_frequency: 6.0,
         precip_offset: 0.0,
         temperature_frequency: 2.0,
         temperature_offset: 0.0,
         ocean_height: -1.0,
-        river_height_limit: 0.25,
-        river_tile_prob: 0.02,
-        river_tile_limit: 500,
+        river_tile_limit: 400,
         seed: None,
     };
 
