@@ -1,6 +1,7 @@
 #![feature(min_const_generics)]
 mod terrain;
-use crate::terrain::terrain::{AutoGenConfig, Landmass};
+mod render;
+use crate::terrain::{AutoGenConfig, Landmass};
 
 fn main() {
     // Create the new landmass and tell it to autogen the world
@@ -8,6 +9,8 @@ fn main() {
     land.render = true;
 
     let config = AutoGenConfig {
+        x_scale: 200.,
+        y_scale: 100.,
         landmass_frequency: 4.0,
         precip_frequency: 6.0,
         precip_offset: 0.0,
@@ -18,8 +21,8 @@ fn main() {
         seed: None,
     };
 
-    land.autogen(config);
+    land.autogen(&config);
 
     // Print the landmass to terminal using ncurses
-    //land.termion_print();
+    land.tui_render();
 }
