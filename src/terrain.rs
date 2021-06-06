@@ -18,7 +18,7 @@ pub mod terrain {
         TemperateRainforest,
         TemperateSeasonalForest,
         Shrubland,
-        TemperateGrassland,
+        ColdDesert,
         TropicalRainforest,
         Savanna,
         SubtropicalDesert,
@@ -28,14 +28,14 @@ pub mod terrain {
         fn get_color(&self) -> Rgb {
             match self {
                 Biome::Tundra => Rgb(147, 168, 173),
-                Biome::BorealForest => Rgb(200, 113, 55),
+                Biome::BorealForest => Rgb(0, 80, 70),
                 Biome::TemperateRainforest => Rgb(25, 55, 0),
-                Biome::TemperateSeasonalForest => Rgb(151, 165, 39),
-                Biome::Shrubland => Rgb(127, 133, 96),
-                Biome::TemperateGrassland => Rgb(136, 133, 39),
+                Biome::TemperateSeasonalForest => Rgb(145, 215, 70),
+                Biome::Shrubland => Rgb(130, 150, 100),
+                Biome::ColdDesert => Rgb(210, 190, 140),
                 Biome::TropicalRainforest => Rgb(48, 127, 55),
                 Biome::Savanna => Rgb(202, 139, 43),
-                Biome::SubtropicalDesert => Rgb(241, 193, 117),
+                Biome::SubtropicalDesert => Rgb(245, 200, 80),
             }
         }
     }
@@ -203,7 +203,9 @@ pub mod terrain {
     pub struct AutoGenConfig {
         pub landmass_frequency: f64,
         pub precip_frequency: f64,
+        pub precip_offset: f64,
         pub temperature_frequency: f64,
+        pub temperature_offset: f64,
         pub ocean_height: f64,
         pub river_height_limit: f64,
         pub river_tile_prob: f64,
@@ -271,7 +273,12 @@ pub mod terrain {
             let g = g.set_frequency(config.precip_frequency);
             for x in 0..X {
                 for y in 0..Y {
-                    self.precip_map[x][y] = g.get([x as f64 / X as f64, y as f64 / Y as f64]);
+                    self.precip_map[x][y] = 1.5 * g.get([x as f64 / X as f64, y as f64 / Y as f64]) + config.precip_offset;
+                    if self.precip_map[x][y] > 1.0 {
+                        self.precip_map[x][y] = 1.0;
+                    } else if self.precip_map[x][y] < -1.0 {
+                        self.precip_map[x][y] = -1.0;
+                    }
                 }
             }
 
@@ -289,9 +296,15 @@ pub mod terrain {
                     // Get a [-0.5, 0.5] value
                     let value = g.get([x as f64 / X as f64, y as f64 / Y as f64]) / 2.0;
 
-                    // Let natural temp be 0.5 at equator, -0.5 at poles
-                    let temp = -2.0 * ((y as f64) / (Y as f64) - 0.5).abs() + 0.5;
-                    self.temperature_map[x][y] = temp + value;
+                    // Let natural temp be 0.7 at equator, -0.6 at poles
+                    let temp = -2.6 * ((y as f64) / (Y as f64) - 0.5).abs() + 0.7;
+                    self.temperature_map[x][y] = temp + value + config.temperature_offset;
+
+                    if self.temperature_map[x][y] > 1.0 {
+                        self.temperature_map[x][y] = 1.0;
+                    } else if self.temperature_map[x][y] < -1.0 {
+                        self.temperature_map[x][y] = -1.0;
+                    }
                 }
             }
 
@@ -320,7 +333,7 @@ pub mod terrain {
 
                     // Temperate grassland/Cold desert
                     if temp > 0.0 && temp < 22.0 && precip < 50.0 {
-                        biome = Biome::TemperateGrassland;
+                        biome = Biome::ColdDesert;
                     }
 
                     // Woodland/Shrubland 50 cm at 7 C, 120 cm at 22 C
