@@ -1,6 +1,5 @@
-#![feature(min_const_generics)]
-mod terrain;
 mod render;
+mod terrain;
 use crate::terrain::{AutoGenConfig, Landmass};
 
 fn main() {

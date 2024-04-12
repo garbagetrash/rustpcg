@@ -1,6 +1,5 @@
-use noise::Seedable;
-use noise::{Fbm, MultiFractal, NoiseFn};
-use rand::prelude::*;
+use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
@@ -197,7 +196,6 @@ pub struct Landmass<const X: usize, const Y: usize> {
 }
 
 impl<const X: usize, const Y: usize> Landmass<X, Y> {
-
     pub fn new() -> Landmass<X, Y> {
         Landmass {
             height_map: Grid::<f64, X, Y>::new([[0.0; Y]; X]),
@@ -220,36 +218,28 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
     }
 
     pub fn generate_height_map(&mut self, config: &AutoGenConfig) {
-
         // Generate the height_map
-        let g = Fbm::new();
-        let seed = {
-            if let Some(s) = config.seed {
-                s
-            } else {
-                let mut rng = rand::thread_rng();
-                rng.gen()
-            }
-        };
-        let g = g.set_seed(seed);
+        let g = Fbm::<Simplex>::default();
         let g = g.set_frequency(config.landmass_frequency);
         for x in 0..X {
             for y in 0..Y {
-                self.height_map[x][y] = g.get([x as f64 / config.x_scale, y as f64 / config.y_scale]);
+                self.height_map[x][y] =
+                    g.get([x as f64 / config.x_scale, y as f64 / config.y_scale]);
             }
         }
     }
 
     pub fn generate_precipitation_map(&mut self, config: &AutoGenConfig) {
-
         // Generate the precip_map
-        let g = Fbm::new();
         let mut rng = rand::thread_rng();
-        let g = g.set_seed(rng.gen());
+        let seed: u32 = rng.gen();
+        let g = Fbm::<Simplex>::new(seed);
         let g = g.set_frequency(config.precip_frequency);
         for x in 0..X {
             for y in 0..Y {
-                self.precip_map[x][y] = 1.5 * g.get([x as f64 / config.x_scale, y as f64 / config.y_scale]) + config.precip_offset;
+                self.precip_map[x][y] = 1.5
+                    * g.get([x as f64 / config.x_scale, y as f64 / config.y_scale])
+                    + config.precip_offset;
                 if self.precip_map[x][y] > 1.0 {
                     self.precip_map[x][y] = 1.0;
                 } else if self.precip_map[x][y] < -1.0 {
@@ -260,11 +250,9 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
     }
 
     pub fn generate_temperature_map(&mut self, config: &AutoGenConfig) {
-
         // Generate the temperature_map in degrees C
-        let g = Fbm::new();
         let mut rng = rand::thread_rng();
-        let g = g.set_seed(rng.gen());
+        let g = Fbm::<Simplex>::new(rng.gen());
         let g = g.set_frequency(config.temperature_frequency);
         for x in 0..X {
             for y in 0..Y {
@@ -303,7 +291,6 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
     }
 
     pub fn generate_biome_map(&mut self) {
-
         // Generate the biome map
         for x in 0..X {
             for y in 0..Y {
@@ -387,7 +374,6 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
     }
 
     pub fn fill_rivers(&mut self, config: &AutoGenConfig) {
-
         // Populate river sources
         let mut rng = rand::thread_rng();
         for x in 0..X {
@@ -429,7 +415,6 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
     }
 
     pub fn autogen(&mut self, config: &AutoGenConfig) {
-
         self.generate_height_map(config);
 
         self.generate_precipitation_map(config);

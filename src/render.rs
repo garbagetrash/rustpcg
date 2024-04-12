@@ -1,10 +1,10 @@
+use crate::terrain::{Biome, Feature, Landmass};
+use std::collections::HashSet;
+use std::io::{stdin, stdout, Write};
 use termion::color::{Bg, Fg, Rgb};
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::*;
-use crate::terrain::{Biome, Landmass, Feature};
-use std::collections::HashSet;
-use std::io::{stdout, stdin, Write};
 
 impl Biome {
     fn get_color(&self) -> Rgb {
@@ -23,7 +23,6 @@ impl Biome {
 }
 
 impl<const X: usize, const Y: usize> Landmass<X, Y> {
-
     pub fn tui_render(&self) {
         let stdin = stdin();
         let mut stdout = stdout()
@@ -43,24 +42,19 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
                         match feature {
                             Feature::RiverSource => {
                                 let tc = color::Fg(color::Rgb(0, 255, 255));
-                                let tcb =
-                                    color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                let tcb = color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
                                 let tchar = 'o';
                                 (tc, tcb, tchar)
                             }
                             Feature::River => {
-                                let tc =
-                                    color::Fg(color::Rgb(0, 80, value.saturating_add(offset)));
-                                let tcb =
-                                    color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                let tc = color::Fg(color::Rgb(0, 80, value.saturating_add(offset)));
+                                let tcb = color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
                                 let tchar = '~';
                                 (tc, tcb, tchar)
                             }
                             Feature::Ocean => {
-                                let tc =
-                                    color::Fg(color::Rgb(0, 0, value.saturating_add(offset)));
-                                let tcb =
-                                    color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                let tc = color::Fg(color::Rgb(0, 0, value.saturating_add(offset)));
+                                let tcb = color::Bg(color::Rgb(0, 0, value.saturating_add(offset)));
                                 let tchar = '~';
                                 (tc, tcb, tchar)
                             }
@@ -209,16 +203,16 @@ impl<const X: usize, const Y: usize> Landmass<X, Y> {
             Biome::TropicalRainforest => {
                 tile_color = Fg(Rgb(0, 100, 0));
                 tile_char = 't';
-            },
+            }
             Biome::BorealForest => {
                 tile_color = Fg(Rgb(0, 60, 0));
                 tile_char = 't';
-            },
+            }
             Biome::TemperateSeasonalForest => {
                 tile_color = Fg(Rgb(70, 100, 40));
                 tile_char = 'p';
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         if h > 0.8 {
