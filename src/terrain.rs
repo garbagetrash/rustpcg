@@ -29,7 +29,7 @@ pub struct Grid<T, const X: usize, const Y: usize> {
     value: [[T; Y]; X],
 }
 
-impl<T, const X: usize, const Y: usize> Grid<T, X, Y> {
+impl<T: Copy, const X: usize, const Y: usize> Grid<T, X, Y> {
     pub fn new(grid: [[T; Y]; X]) -> Grid<T, X, Y> {
         Grid { value: grid }
     }
@@ -70,6 +70,18 @@ impl<T, const X: usize, const Y: usize> Grid<T, X, Y> {
             output.push((point.0, point.1 + 1));
         }
 
+        output
+    }
+
+    pub fn to_vecs(&self) -> Vec<Vec<T>> {
+        let mut output = vec![];
+        for row in &self.value {
+            let mut temp = vec![];
+            for t in row {
+                temp.push(*t);
+            }
+            output.push(temp);
+        }
         output
     }
 }
